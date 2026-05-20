@@ -32,3 +32,15 @@ BAR-side diagnostic result:
 
 \[ControllerDiag], GetControllerState:, no
 
+
+## Input/Lua event pipeline findings
+
+Additional grep results show the expected engine integration path.
+
+### SDL event pump
+
+`InputHandler::PushEvents()` polls SDL events:
+
+```text
+rts/System/Input/InputHandler.cpp:26
+while (SDL_PollEvent(&event)) {
