@@ -31,6 +31,41 @@ void CControllerInput::FreeInstance(CControllerInput* controllerInputPtr)
 	}
 }
 
+CControllerInput::ControllerStateSnapshot CControllerInput::MakeControllerStateSnapshot(const ControllerState& state)
+{
+	ControllerStateSnapshot snapshot;
+	snapshot.deviceId = state.deviceId;
+	snapshot.instanceId = state.instanceId;
+	snapshot.name = state.name;
+	snapshot.axes = state.axes;
+	snapshot.buttons = state.buttons;
+
+	return snapshot;
+}
+
+std::vector<CControllerInput::ControllerStateSnapshot> CControllerInput::GetAvailableControllers() const
+{
+	std::vector<ControllerStateSnapshot> controllers;
+	controllers.reserve(controllersByInstanceId.size());
+
+	for (const auto& controllerIt : controllersByInstanceId) {
+		controllers.push_back(MakeControllerStateSnapshot(controllerIt.second));
+	}
+
+	return controllers;
+}
+
+bool CControllerInput::GetControllerState(int instanceId, ControllerStateSnapshot& state) const
+{
+	auto controllerIt = controllersByInstanceId.find(instanceId);
+	if (controllerIt == controllersByInstanceId.end()) {
+		return false;
+	}
+
+	state = MakeControllerStateSnapshot(controllerIt->second);
+	return true;
+}
+
 #ifndef HEADLESS
 
 CControllerInput::CControllerInput()
