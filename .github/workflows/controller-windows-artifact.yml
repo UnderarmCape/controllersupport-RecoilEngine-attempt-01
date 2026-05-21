@@ -13,6 +13,7 @@ permissions:
 env:
   PLATFORM: amd64-windows
   BUILD_DIR: build-windows
+  CACHE_DIR: .cache/ccache-windows
   LOG_DIR: ci-windows-logs
 
 jobs:
@@ -28,16 +29,55 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Prepare log directory
+      - name: Prepare directories
         shell: bash
-        run: mkdir -p "$LOG_DIR"
+        run: mkdir -p "$BUILD_DIR" "$CACHE_DIR" "$LOG_DIR"
 
-      - name: Build Windows amd64 with Docker build v2
+      - name: Resolve Docker build image
+        id: resolve-image
+        shell: bash
+        run: |
+          set -euo pipefail
+          source docker-build-v2/images_versions.sh
+          image="ghcr.io/beyond-all-reason/recoil-build-${PLATFORM}@${image_version[$PLATFORM]}"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Using $image"
+
+      - name: Pull Docker build image
+        shell: bash
+        run: docker pull "${{ steps.resolve-image.outputs.image }}"
+
+      - name: Build Windows amd64 directly in Docker
         shell: bash
         run: |
           set -euo pipefail
           docker version
-          script -q -e -c "bash docker-build-v2/build.sh -j $(nproc) windows" "$LOG_DIR/build-windows.log"
+
+          docker run -i --rm \
+            -v /etc/passwd:/etc/passwd:ro \
+            -v /etc/group:/etc/group:ro \
+            --user="$(id -u):$(id -g)" \
+            -v "$PWD":/build/src:ro \
+            -v "$PWD/$CACHE_DIR":/build/cache:rw \
+            -v "$PWD/$BUILD_DIR":/build/out:rw \
+            -v "$PWD/$LOG_DIR":/build/logs:rw \
+            -e CI=true \
+            -e GITHUB_ACTIONS=true \
+            -e CONFIGURE=true \
+            -e COMPILE=true \
+            -e CMAKE_BUILD_PARALLEL_LEVEL="$(nproc)" \
+            "${{ steps.resolve-image.outputs.image }}" \
+            bash <<'EOF'
+          set -euo pipefail
+          cd /build/src/docker-build-v2/scripts
+
+          ./configure.sh 2>&1 | tee /build/logs/configure.log
+          ./compile.sh 2>&1 | tee /build/logs/build-windows.log
+
+          if [[ "${ENGINE_PLATFORM:-}" =~ .*windows ]]; then
+            ./split-debug-info.sh 2>&1 | tee /build/logs/split-debug-info.log
+          fi
+          EOF
 
       - name: Gather build logs
         if: always()
@@ -50,6 +90,7 @@ jobs:
             echo "Controller Windows artifact build"
             echo "Commit: $GITHUB_SHA"
             echo "Platform: $PLATFORM"
+            echo "Docker image: ${{ steps.resolve-image.outputs.image }}"
             echo "Build directory: $BUILD_DIR"
             echo
             echo "Selected build outputs:"
