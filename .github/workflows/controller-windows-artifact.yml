@@ -2,6 +2,9 @@ name: Controller Windows artifact
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - research/controller-api-investigation
 
 permissions:
   contents: read
