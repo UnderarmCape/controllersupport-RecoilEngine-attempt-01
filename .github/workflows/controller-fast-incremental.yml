@@ -1,0 +1,128 @@
+name: Controller Fast Incremental Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/controller-api-2025-06-19
+
+permissions:
+  contents: read
+
+env:
+  PLATFORM: amd64-windows
+  BUILD_DIR: build-fast-windows
+  CACHE_DIR: .cache/sccache-windows
+  LOG_DIR: ci-fast-logs
+
+jobs:
+  fast-incremental:
+    name: Fast incremental Windows build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.BUILD_DIR }}
+            ${{ env.CACHE_DIR }}
+          key: recoil-fast-${{ runner.os }}-${{ github.ref_name }}-${{ hashFiles('rts/System/Input/**', 'rts/Lua/**') }}
+          restore-keys: |
+            recoil-fast-${{ runner.os }}-${{ github.ref_name }}-
+            recoil-fast-${{ runner.os }}-
+
+      - name: Prepare directories
+        shell: bash
+        run: mkdir -p "$BUILD_DIR" "$CACHE_DIR" "$LOG_DIR"
+
+      - name: Resolve Docker build image
+        id: resolve-image
+        shell: bash
+        run: |
+          set -euo pipefail
+          source docker-build-v2/images_versions.sh
+          image="ghcr.io/beyond-all-reason/recoil-build-${PLATFORM}@${image_version[$PLATFORM]}"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Using $image"
+
+      - name: Pull Docker build image
+        shell: bash
+        run: docker pull "${{ steps.resolve-image.outputs.image }}"
+
+      - name: Fast incremental build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run -i --rm \
+            -v /etc/passwd:/etc/passwd:ro \
+            -v /etc/group:/etc/group:ro \
+            --user="$(id -u):$(id -g)" \
+            -v "$PWD":/build/src:rw \
+            -v "$PWD/$BUILD_DIR":/build/out:rw \
+            -v "$PWD/$CACHE_DIR":/build/cache:rw \
+            -v "$PWD/$LOG_DIR":/build/logs:rw \
+            -e CI=true \
+            -e GITHUB_ACTIONS=true \
+            -e SCCACHE_DIR=/build/cache \
+            -e CMAKE_BUILD_PARALLEL_LEVEL="$(nproc)" \
+            "${{ steps.resolve-image.outputs.image }}" \
+            bash <<'EOF'
+
+          set -euo pipefail
+
+          cd /build/src/docker-build-v2/scripts
+
+          ./configure.sh \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            2>&1 | tee /build/logs/configure.log
+
+          ./compile.sh --target engine-legacy --parallel "$(nproc)" \
+            2>&1 | tee /build/logs/build.log
+
+          EOF
+
+      - name: Gather outputs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$LOG_DIR"
+
+          {
+            echo "Fast incremental controller build"
+            echo "Commit: $GITHUB_SHA"
+            echo "Platform: $PLATFORM"
+            echo
+            echo "Build outputs:"
+            find "$BUILD_DIR" -type f \
+              \( -name 'spring.exe' -o -name '*.dll' -o -name '.ninja_log' \) \
+              -print 2>/dev/null || true
+          } > "$LOG_DIR/artifact-summary.txt"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fast-controller-build-logs-${{ github.sha }}
+          path: ${{ env.LOG_DIR }}
+          retention-days: 7
+
+      - name: Upload minimal runtime
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fast-controller-runtime-${{ github.sha }}
+          path: |
+            ${{ env.BUILD_DIR }}/spring.exe
+            ${{ env.BUILD_DIR }}/unitsync.dll
+          if-no-files-found: warn
+          retention-days: 7
