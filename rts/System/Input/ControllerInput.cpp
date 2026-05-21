@@ -70,6 +70,12 @@ bool CControllerInput::GetControllerState(int instanceId, ControllerStateSnapsho
 
 CControllerInput::CControllerInput()
 {
+	if (SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0) {
+		LOG_L(L_WARNING, "[ControllerInput] Failed to initialize SDL joystick/gamecontroller subsystem: %s", SDL_GetError());
+	} else {
+		LOG_L(L_INFO, "[ControllerInput] SDL joystick/gamecontroller subsystem initialized");
+	}
+
 	SDL_GameControllerEventState(SDL_ENABLE);
 	SDL_JoystickEventState(SDL_ENABLE);
 
