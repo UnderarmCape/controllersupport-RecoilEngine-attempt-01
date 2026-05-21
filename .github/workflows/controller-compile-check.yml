@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - research/controller-api-investigation
+      - research/controller-api-2025-06-19
 
 permissions:
   contents: read
