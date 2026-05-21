@@ -50,16 +50,16 @@ jobs:
         run: |
           set -euo pipefail
           docker run -i --rm \
-  -v /etc/passwd:/etc/passwd:ro \
-  -v /etc/group:/etc/group:ro \
-  --user="$(id -u):$(id -g)" \
-  -v "$PWD":/build/src:ro \
-  -v "$PWD/$BUILD_DIR":/build/out:rw \
-  -v "$PWD/$LOG_DIR":/build/logs:rw \
-  -e CI=true \
-  -e GITHUB_ACTIONS=true \
-  -e CMAKE_BUILD_PARALLEL_LEVEL="$(nproc)" \
-  "${{ steps.resolve-image.outputs.image }}" \
+            -v /etc/passwd:/etc/passwd:ro \
+            -v /etc/group:/etc/group:ro \
+            --user="$(id -u):$(id -g)" \
+            -v "$PWD":/build/src:ro \
+            -v "$PWD/$BUILD_DIR":/build/out:rw \
+            -v "$PWD/$LOG_DIR":/build/logs:rw \
+            -e CI=true \
+            -e GITHUB_ACTIONS=true \
+            -e CMAKE_BUILD_PARALLEL_LEVEL="$(nproc)" \
+            "${{ steps.resolve-image.outputs.image }}" \
             bash <<'EOF'
           set -euo pipefail
           cd /build/src/docker-build-v2/scripts
