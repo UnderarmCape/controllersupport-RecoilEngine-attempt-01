@@ -5,10 +5,12 @@
 #include "System/Input/InputHandler.h"
 #include "System/Log/ILog.h"
 
+#ifndef HEADLESS
 #include <SDL_events.h>
 #include <SDL_error.h>
 #include <SDL_gamecontroller.h>
 #include <SDL_joystick.h>
+#endif
 
 CControllerInput* controllerInput = nullptr;
 
@@ -29,6 +31,8 @@ void CControllerInput::FreeInstance(CControllerInput* controllerInputPtr)
 	}
 }
 
+#ifndef HEADLESS
+
 CControllerInput::CControllerInput()
 {
 	inputCon = input.AddHandler([this](const SDL_Event& event) {
@@ -40,7 +44,9 @@ CControllerInput::CControllerInput()
 
 CControllerInput::~CControllerInput()
 {
-	for (auto& [instanceId, state] : controllersByInstanceId) {
+	for (auto& controllerIt : controllersByInstanceId) {
+		auto& state = controllerIt.second;
+
 		if (state.gameController != nullptr) {
 			SDL_GameControllerClose(state.gameController);
 			state.gameController = nullptr;
@@ -131,6 +137,11 @@ void CControllerInput::HandleDeviceAdded(int deviceId)
 	state.name = name != nullptr ? name : "unknown";
 	state.gameController = gameController;
 
+	auto existingIt = controllersByInstanceId.find(instanceId);
+	if (existingIt != controllersByInstanceId.end() && existingIt->second.gameController != nullptr) {
+		SDL_GameControllerClose(existingIt->second.gameController);
+	}
+
 	controllersByInstanceId[instanceId] = state;
 
 	LOG_L(L_INFO, "[ControllerInput] Controller connected: deviceId=%d instanceId=%d name=%s", deviceId, instanceId, state.name.c_str());
@@ -162,33 +173,68 @@ void CControllerInput::HandleDeviceRemapped(int instanceId)
 
 void CControllerInput::HandleButtonDown(int instanceId, int buttonId, std::uint8_t value)
 {
-	auto& state = controllersByInstanceId[instanceId];
+	auto controllerIt = controllersByInstanceId.find(instanceId);
+	if (controllerIt == controllersByInstanceId.end()) {
+		return;
+	}
+
+	auto& state = controllerIt->second;
 
 	if (buttonId >= 0 && buttonId < static_cast<int>(state.buttons.size())) {
 		state.buttons[buttonId] = value;
 	}
 
-	LOG_L(L_INFO, "[ControllerInput] ButtonDown: instanceId=%d buttonId=%d value=%u", instanceId, buttonId, value);
+	LOG_L(L_INFO, "[ControllerInput] ButtonDown: instanceId=%d buttonId=%d value=%u", instanceId, buttonId, static_cast<unsigned int>(value));
 }
 
 void CControllerInput::HandleButtonUp(int instanceId, int buttonId, std::uint8_t value)
 {
-	auto& state = controllersByInstanceId[instanceId];
+	auto controllerIt = controllersByInstanceId.find(instanceId);
+	if (controllerIt == controllersByInstanceId.end()) {
+		return;
+	}
+
+	auto& state = controllerIt->second;
 
 	if (buttonId >= 0 && buttonId < static_cast<int>(state.buttons.size())) {
 		state.buttons[buttonId] = value;
 	}
 
-	LOG_L(L_INFO, "[ControllerInput] ButtonUp: instanceId=%d buttonId=%d value=%u", instanceId, buttonId, value);
+	LOG_L(L_INFO, "[ControllerInput] ButtonUp: instanceId=%d buttonId=%d value=%u", instanceId, buttonId, static_cast<unsigned int>(value));
 }
 
 void CControllerInput::HandleAxisMotion(int instanceId, int axisId, std::int16_t value)
 {
-	auto& state = controllersByInstanceId[instanceId];
+	auto controllerIt = controllersByInstanceId.find(instanceId);
+	if (controllerIt == controllersByInstanceId.end()) {
+		return;
+	}
+
+	auto& state = controllerIt->second;
 
 	if (axisId >= 0 && axisId < static_cast<int>(state.axes.size())) {
 		state.axes[axisId] = value;
 	}
 
-	LOG_L(L_INFO, "[ControllerInput] AxisMotion: instanceId=%d axisId=%d value=%d", instanceId, axisId, value);
+	LOG_L(L_INFO, "[ControllerInput] AxisMotion: instanceId=%d axisId=%d value=%d", instanceId, axisId, static_cast<int>(value));
 }
+
+#else
+
+CControllerInput::CControllerInput() = default;
+CControllerInput::~CControllerInput() = default;
+
+bool CControllerInput::HandleSDLControllerEvent(const SDL_Event&)
+{
+	return false;
+}
+
+void CControllerInput::LogAvailableController(int) const {}
+void CControllerInput::HandleDeviceAdded(int) {}
+void CControllerInput::HandleDeviceRemoved(int) {}
+void CControllerInput::HandleDeviceRemapped(int) {}
+void CControllerInput::HandleButtonDown(int, int, std::uint8_t) {}
+void CControllerInput::HandleButtonUp(int, int, std::uint8_t) {}
+void CControllerInput::HandleAxisMotion(int, int, std::int16_t) {}
+
+#endif

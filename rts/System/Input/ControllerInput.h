@@ -25,15 +25,15 @@ public:
 
 private:
 	struct ControllerState {
-	int deviceId = -1;
-	int instanceId = -1;
-	std::string name;
+		int deviceId = -1;
+		int instanceId = -1;
+		std::string name;
 
-	SDL_GameController* gameController = nullptr;
+		SDL_GameController* gameController = nullptr;
 
-	std::array<std::int16_t, 16> axes = {};
-	std::array<std::uint8_t, 32> buttons = {};
-};
+		std::array<std::int16_t, 16> axes = {};
+		std::array<std::uint8_t, 32> buttons = {};
+	};
 
 	void LogAvailableController(int deviceId) const;
 	void HandleDeviceAdded(int deviceId);
