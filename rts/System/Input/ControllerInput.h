@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "System/Input/InputHandler.h"
 
@@ -20,6 +21,18 @@ public:
 
 	CControllerInput();
 	~CControllerInput();
+
+	struct ControllerStateSnapshot {
+		int deviceId = -1;
+		int instanceId = -1;
+		std::string name;
+
+		std::array<std::int16_t, 16> axes = {};
+		std::array<std::uint8_t, 32> buttons = {};
+	};
+
+	std::vector<ControllerStateSnapshot> GetAvailableControllers() const;
+	bool GetControllerState(int instanceId, ControllerStateSnapshot& state) const;
 
 	bool HandleSDLControllerEvent(const SDL_Event& event);
 
@@ -34,6 +47,8 @@ private:
 		std::array<std::int16_t, 16> axes = {};
 		std::array<std::uint8_t, 32> buttons = {};
 	};
+
+	static ControllerStateSnapshot MakeControllerStateSnapshot(const ControllerState& state);
 
 	void LogAvailableController(int deviceId) const;
 	void HandleDeviceAdded(int deviceId);
