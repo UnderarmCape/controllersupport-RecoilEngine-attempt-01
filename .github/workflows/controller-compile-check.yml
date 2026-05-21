@@ -1,0 +1,123 @@
+name: Controller compile check
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/controller-api-investigation
+
+permissions:
+  contents: read
+
+env:
+  PLATFORM: amd64-linux
+  BUILD_DIR: build-controller
+  LOG_DIR: ci-logs
+  ARTIFACT_DIR: ci-artifacts
+
+jobs:
+  linux-engine-legacy:
+    name: Linux amd64 engine-legacy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Prepare output directories
+        run: mkdir -p "$BUILD_DIR" "$LOG_DIR" "$ARTIFACT_DIR"
+
+      - name: Resolve Docker build image
+        id: resolve-image
+        shell: bash
+        run: |
+          set -euo pipefail
+          source docker-build-v2/images_versions.sh
+          image="ghcr.io/beyond-all-reason/recoil-build-${PLATFORM}@${image_version[$PLATFORM]}"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Using $image"
+
+      - name: Pull Docker build image
+        shell: bash
+        run: docker pull "${{ steps.resolve-image.outputs.image }}"
+
+      - name: Configure and build engine-legacy
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -i --rm \
+            -v /etc/passwd:/etc/passwd:ro \
+            -v /etc/group:/etc/group:ro \
+            --user="$(id -u):$(id -g)" \
+            -v "$PWD":/build/src:ro \
+            -v "$PWD/$BUILD_DIR":/build/out:rw \
+            -v "$PWD/$LOG_DIR":/build/logs:rw \
+            -e CMAKE_BUILD_PARALLEL_LEVEL="$(nproc)" \
+            "${{ steps.resolve-image.outputs.image }}" \
+            bash <<'EOF'
+          set -euo pipefail
+          cd /build/src/docker-build-v2/scripts
+
+          ./configure.sh \
+            -DAI_TYPES=NONE \
+            -DBUILD_spring-headless=OFF \
+            -DBUILD_spring-dedicated=OFF \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            2>&1 | tee /build/logs/configure.log
+
+          ./compile.sh --target engine-legacy --parallel "$(nproc)" \
+            2>&1 | tee /build/logs/build-engine-legacy.log
+          EOF
+
+      - name: Gather logs and artifacts
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$LOG_DIR" "$ARTIFACT_DIR"
+
+          {
+            echo "Controller compile check"
+            echo "Commit: $GITHUB_SHA"
+            echo "Platform: $PLATFORM"
+            echo "Docker image: ${{ steps.resolve-image.outputs.image }}"
+            echo
+            echo "Selected build outputs:"
+            find "$BUILD_DIR" -maxdepth 2 -type f \
+              \( -name 'spring' -o -name 'compile_commands.json' -o -name '.ninja_log' \) \
+              -print 2>/dev/null || true
+          } > "$LOG_DIR/artifact-summary.txt"
+
+          for file in \
+            "$BUILD_DIR/CMakeCache.txt" \
+            "$BUILD_DIR/CMakeFiles/CMakeOutput.log" \
+            "$BUILD_DIR/CMakeFiles/CMakeError.log" \
+            "$BUILD_DIR/.ninja_log"
+          do
+            if [[ -f "$file" ]]; then
+              cp "$file" "$LOG_DIR/$(basename "$file")"
+            fi
+          done
+
+          if [[ -f "$BUILD_DIR/spring" ]]; then
+            cp "$BUILD_DIR/spring" "$ARTIFACT_DIR/spring"
+          fi
+
+          if [[ -f "$BUILD_DIR/compile_commands.json" ]]; then
+            cp "$BUILD_DIR/compile_commands.json" "$ARTIFACT_DIR/compile_commands.json"
+          fi
+
+      - name: Upload controller compile outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: controller-compile-${{ env.PLATFORM }}-${{ github.sha }}
+          path: |
+            ${{ env.LOG_DIR }}
+            ${{ env.ARTIFACT_DIR }}
+          if-no-files-found: warn
+          retention-days: 14
