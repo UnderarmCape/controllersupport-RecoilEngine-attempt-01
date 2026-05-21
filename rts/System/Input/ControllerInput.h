@@ -51,6 +51,7 @@ private:
 	static ControllerStateSnapshot MakeControllerStateSnapshot(const ControllerState& state);
 
 	void LogAvailableController(int deviceId) const;
+	void ScanExistingControllers();
 	void HandleDeviceAdded(int deviceId);
 	void HandleDeviceRemoved(int instanceId);
 	void HandleDeviceRemapped(int instanceId);
