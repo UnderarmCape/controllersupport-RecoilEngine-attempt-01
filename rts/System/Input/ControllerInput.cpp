@@ -6,11 +6,9 @@
 #include "System/Log/ILog.h"
 
 #include <SDL_events.h>
+#include <SDL_error.h>
+#include <SDL_gamecontroller.h>
 #include <SDL_joystick.h>
-
-#if SDL_VERSION_ATLEAST(2, 0, 0)
-	#include <SDL_gamecontroller.h>
-#endif
 
 CControllerInput* controllerInput = nullptr;
 
@@ -30,6 +28,7 @@ void CControllerInput::FreeInstance(CControllerInput* controllerInputPtr)
 		controllerInput = nullptr;
 	}
 }
+
 CControllerInput::CControllerInput()
 {
 	inputCon = input.AddHandler([this](const SDL_Event& event) {
@@ -89,17 +88,14 @@ bool CControllerInput::HandleSDLControllerEvent(const SDL_Event& event)
 
 void CControllerInput::LogAvailableController(int deviceId) const
 {
-#if SDL_VERSION_ATLEAST(2, 0, 0)
 	if (SDL_IsGameController(deviceId)) {
 		const char* name = SDL_GameControllerNameForIndex(deviceId);
 		LOG_L(L_INFO, "[ControllerInput] SDL game controller available: deviceId=%d name=%s", deviceId, name != nullptr ? name : "unknown");
-	} else {
-		const char* name = SDL_JoystickNameForIndex(deviceId);
-		LOG_L(L_INFO, "[ControllerInput] SDL joystick available but not game controller: deviceId=%d name=%s", deviceId, name != nullptr ? name : "unknown");
+		return;
 	}
-#else
-	LOG_L(L_INFO, "[ControllerInput] SDL2 game controller API unavailable at compile time: deviceId=%d", deviceId);
-#endif
+
+	const char* name = SDL_JoystickNameForIndex(deviceId);
+	LOG_L(L_INFO, "[ControllerInput] SDL joystick available but not game controller: deviceId=%d name=%s", deviceId, name != nullptr ? name : "unknown");
 }
 
 void CControllerInput::HandleDeviceAdded(int deviceId)
@@ -107,7 +103,6 @@ void CControllerInput::HandleDeviceAdded(int deviceId)
 	LOG_L(L_INFO, "[ControllerInput] Controller device added: deviceId=%d", deviceId);
 	LogAvailableController(deviceId);
 
-#if SDL_VERSION_ATLEAST(2, 0, 0)
 	if (!SDL_IsGameController(deviceId)) {
 		LOG_L(L_INFO, "[ControllerInput] Ignoring non-game-controller device: deviceId=%d", deviceId);
 		return;
@@ -122,6 +117,12 @@ void CControllerInput::HandleDeviceAdded(int deviceId)
 	SDL_Joystick* joystick = SDL_GameControllerGetJoystick(gameController);
 	const int instanceId = joystick != nullptr ? SDL_JoystickInstanceID(joystick) : -1;
 
+	if (instanceId < 0) {
+		LOG_L(L_WARNING, "[ControllerInput] Failed to get joystick instance id: deviceId=%d", deviceId);
+		SDL_GameControllerClose(gameController);
+		return;
+	}
+
 	ControllerState state;
 	state.deviceId = deviceId;
 	state.instanceId = instanceId;
@@ -133,7 +134,6 @@ void CControllerInput::HandleDeviceAdded(int deviceId)
 	controllersByInstanceId[instanceId] = state;
 
 	LOG_L(L_INFO, "[ControllerInput] Controller connected: deviceId=%d instanceId=%d name=%s", deviceId, instanceId, state.name.c_str());
-#endif
 }
 
 void CControllerInput::HandleDeviceRemoved(int instanceId)
@@ -141,7 +141,10 @@ void CControllerInput::HandleDeviceRemoved(int instanceId)
 	LOG_L(L_INFO, "[ControllerInput] Controller device removed: instanceId=%d", instanceId);
 
 	auto it = controllersByInstanceId.find(instanceId);
-	if (it != controllersByInstanceId.end()) {
+	if (it == controllersByInstanceId.end()) {
+		return;
+	}
+
 	LOG_L(L_INFO, "[ControllerInput] Removed tracked controller: instanceId=%d name=%s", instanceId, it->second.name.c_str());
 
 	if (it->second.gameController != nullptr) {
