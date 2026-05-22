@@ -6,6 +6,7 @@
 #include "System/Log/ILog.h"
 
 #ifndef HEADLESS
+#include <SDL.h>
 #include <SDL_events.h>
 #include <SDL_error.h>
 #include <SDL_gamecontroller.h>
