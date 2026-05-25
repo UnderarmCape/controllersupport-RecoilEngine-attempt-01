@@ -1,10 +1,8 @@
 name: Controller Windows artifact
+run-name: Controller Windows artifact - ${{ github.ref_name }} @ ${{ github.sha }}
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - research/controller-api-investigation
 
 permissions:
   contents: read
@@ -49,6 +47,7 @@ jobs:
 
           {
             echo "Controller Windows artifact build"
+            echo "Branch: $GITHUB_REF_NAME"
             echo "Commit: $GITHUB_SHA"
             echo "Platform: $PLATFORM"
             echo "Build directory: $BUILD_DIR"

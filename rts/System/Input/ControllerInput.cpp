@@ -5,6 +5,10 @@
 #include "System/Input/InputHandler.h"
 #include "System/Log/ILog.h"
 
+#ifndef CONTROLLER_INPUT_LOG_EVENTS
+#define CONTROLLER_INPUT_LOG_EVENTS 0
+#endif
+
 #ifndef HEADLESS
 #include <SDL_events.h>
 #include <SDL_error.h>
@@ -219,7 +223,9 @@ void CControllerInput::HandleButtonDown(int instanceId, int buttonId, std::uint8
 		state.buttons[buttonId] = value;
 	}
 
+#if CONTROLLER_INPUT_LOG_EVENTS
 	LOG_L(L_INFO, "[ControllerInput] ButtonDown: instanceId=%d buttonId=%d value=%u", instanceId, buttonId, static_cast<unsigned int>(value));
+#endif
 }
 
 void CControllerInput::HandleButtonUp(int instanceId, int buttonId, std::uint8_t value)
@@ -235,7 +241,9 @@ void CControllerInput::HandleButtonUp(int instanceId, int buttonId, std::uint8_t
 		state.buttons[buttonId] = value;
 	}
 
+#if CONTROLLER_INPUT_LOG_EVENTS
 	LOG_L(L_INFO, "[ControllerInput] ButtonUp: instanceId=%d buttonId=%d value=%u", instanceId, buttonId, static_cast<unsigned int>(value));
+#endif
 }
 
 void CControllerInput::HandleAxisMotion(int instanceId, int axisId, std::int16_t value)
@@ -251,7 +259,9 @@ void CControllerInput::HandleAxisMotion(int instanceId, int axisId, std::int16_t
 		state.axes[axisId] = value;
 	}
 
+#if CONTROLLER_INPUT_LOG_EVENTS
 	LOG_L(L_INFO, "[ControllerInput] AxisMotion: instanceId=%d axisId=%d value=%d", instanceId, axisId, static_cast<int>(value));
+#endif
 }
 
 #else
