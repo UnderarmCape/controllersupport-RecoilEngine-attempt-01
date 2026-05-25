@@ -10,6 +10,7 @@
 #endif
 
 #ifndef HEADLESS
+#include <SDL.h>
 #include <SDL_events.h>
 #include <SDL_error.h>
 #include <SDL_gamecontroller.h>
@@ -74,9 +75,21 @@ bool CControllerInput::GetControllerState(int instanceId, ControllerStateSnapsho
 
 CControllerInput::CControllerInput()
 {
+	if (SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0) {
+		LOG_L(L_WARNING, "[ControllerInput] Failed to initialize SDL joystick/gamecontroller subsystem: %s", SDL_GetError());
+	} else {
+		LOG_L(L_INFO, "[ControllerInput] SDL joystick/gamecontroller subsystem initialized");
+	}
+
+	SDL_GameControllerEventState(SDL_ENABLE);
+	SDL_JoystickEventState(SDL_ENABLE);
+
 	inputCon = input.AddHandler([this](const SDL_Event& event) {
 		return this->HandleSDLControllerEvent(event);
 	});
+
+	LOG_L(L_INFO, "[ControllerInput] SDL_NumJoysticks at init: %d", SDL_NumJoysticks());
+	ScanExistingControllers();
 
 	LOG_L(L_INFO, "[ControllerInput] Initialized SDL controller input handler");
 }
@@ -141,6 +154,23 @@ void CControllerInput::LogAvailableController(int deviceId) const
 
 	const char* name = SDL_JoystickNameForIndex(deviceId);
 	LOG_L(L_INFO, "[ControllerInput] SDL joystick available but not game controller: deviceId=%d name=%s", deviceId, name != nullptr ? name : "unknown");
+}
+
+void CControllerInput::ScanExistingControllers()
+{
+	const int joystickCount = SDL_NumJoysticks();
+	LOG_L(L_INFO, "[ControllerInput] Scanning existing SDL joysticks: count=%d", joystickCount);
+
+	for (int deviceId = 0; deviceId < joystickCount; ++deviceId) {
+		LogAvailableController(deviceId);
+
+		if (SDL_IsGameController(deviceId)) {
+			HandleDeviceAdded(deviceId);
+			continue;
+		}
+
+		LOG_L(L_INFO, "[ControllerInput] Skipping existing non-game-controller device: deviceId=%d", deviceId);
+	}
 }
 
 void CControllerInput::HandleDeviceAdded(int deviceId)
@@ -275,6 +305,7 @@ bool CControllerInput::HandleSDLControllerEvent(const SDL_Event&)
 }
 
 void CControllerInput::LogAvailableController(int) const {}
+void CControllerInput::ScanExistingControllers() {}
 void CControllerInput::HandleDeviceAdded(int) {}
 void CControllerInput::HandleDeviceRemoved(int) {}
 void CControllerInput::HandleDeviceRemapped(int) {}
