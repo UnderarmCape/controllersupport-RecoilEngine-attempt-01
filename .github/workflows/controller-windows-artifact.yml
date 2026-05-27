@@ -9,7 +9,7 @@ permissions:
 
 env:
   PLATFORM: amd64-windows
-  BUILD_DIR: build-amd64-windows
+  BUILD_DIR: build-windows
   LOG_DIR: ci-windows-logs
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           docker version
-          script -q -e -c "bash docker-build-v2/build.sh --arch amd64 -j $(nproc) windows" "$LOG_DIR/build-amd64-windows.log"
+          script -q -e -c "bash docker-build-v2/build.sh -j $(nproc) windows" "$LOG_DIR/build-amd64-windows.log"
 
       - name: Gather build logs
         if: always()
