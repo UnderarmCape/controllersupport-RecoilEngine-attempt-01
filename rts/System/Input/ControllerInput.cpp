@@ -5,8 +5,20 @@
 #include "System/Input/InputHandler.h"
 #include "System/Log/ILog.h"
 
+#include <algorithm>
+#include <cctype>
+#include <string_view>
+
 #ifndef CONTROLLER_INPUT_LOG_EVENTS
 #define CONTROLLER_INPUT_LOG_EVENTS 0
+#endif
+
+#ifndef CONTROLLER_INPUT_DEBOUNCE_DEVICE_EVENTS
+#define CONTROLLER_INPUT_DEBOUNCE_DEVICE_EVENTS 1
+#endif
+
+#ifndef CONTROLLER_INPUT_FILTER_VJOY_CHURN
+#define CONTROLLER_INPUT_FILTER_VJOY_CHURN 1
 #endif
 
 #ifndef HEADLESS
@@ -18,6 +30,24 @@
 #endif
 
 CControllerInput* controllerInput = nullptr;
+
+namespace {
+constexpr float CONTROLLER_INPUT_DEVICE_EVENT_DEBOUNCE_MS = 1000.0f;
+
+bool ControllerInputNameContains(std::string_view name, std::string_view needle)
+{
+	if (needle.empty() || name.size() < needle.size())
+		return false;
+
+	return std::search(
+		name.begin(), name.end(),
+		needle.begin(), needle.end(),
+		[](unsigned char lhs, unsigned char rhs) {
+			return std::tolower(lhs) == std::tolower(rhs);
+		}
+	) != name.end();
+}
+}
 
 CControllerInput* CControllerInput::GetInstance()
 {
@@ -60,14 +90,25 @@ std::optional<CControllerInput::ControllerState> CControllerInput::GetController
 
 CControllerInput::CControllerInput()
 {
+	LOG_L(L_INFO,
+		"[ControllerStutterFix01] Stutter Fix attempt-02 active: single-pump SDL events, controller device debounce=%dms, vJoy filter=%s",
+		static_cast<int>(CONTROLLER_INPUT_DEVICE_EVENT_DEBOUNCE_MS),
+#if CONTROLLER_INPUT_FILTER_VJOY_CHURN
+		"enabled"
+#else
+		"disabled"
+#endif
+	);
+
 	if (SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0) {
 		LOG_L(L_WARNING, "[ControllerInput] Failed to initialize SDL joystick/gamecontroller subsystem: %s", SDL_GetError());
 	} else {
 		LOG_L(L_INFO, "[ControllerInput] SDL joystick/gamecontroller subsystem initialized");
 	}
 
+	SDL_JoystickEventState(SDL_DISABLE);
 	SDL_GameControllerEventState(SDL_ENABLE);
-	SDL_JoystickEventState(SDL_ENABLE);
+	LOG_L(L_INFO, "[ControllerStutterFix01] SDL joystick events disabled; SDL game-controller events remain enabled");
 
 	inputCon = input.AddHandler([this](const SDL_Event& event) {
 		return this->HandleSDLControllerEvent(event);
@@ -99,14 +140,23 @@ bool CControllerInput::HandleSDLControllerEvent(const SDL_Event& event)
 {
 	switch (event.type) {
 		case SDL_CONTROLLERDEVICEADDED: {
+			if (ShouldSuppressDeviceEvent(event.type, event.cdevice.which))
+				break;
+
 			HandleDeviceAdded(event.cdevice.which);
 		} break;
 
 		case SDL_CONTROLLERDEVICEREMOVED: {
+			if (ShouldSuppressDeviceEvent(event.type, event.cdevice.which))
+				break;
+
 			HandleDeviceRemoved(event.cdevice.which);
 		} break;
 
 		case SDL_CONTROLLERDEVICEREMAPPED: {
+			if (ShouldSuppressDeviceEvent(event.type, event.cdevice.which))
+				break;
+
 			HandleDeviceRemapped(event.cdevice.which);
 		} break;
 
@@ -131,6 +181,12 @@ bool CControllerInput::HandleSDLControllerEvent(const SDL_Event& event)
 
 void CControllerInput::LogAvailableController(int deviceID) const
 {
+	if (IsFilteredVirtualDevice(deviceID)) {
+		const char* name = SDL_JoystickNameForIndex(deviceID);
+		LOG_L(L_INFO, "[ControllerStutterFix01] Ignoring filtered virtual joystick: deviceID=%d name=%s", deviceID, name != nullptr ? name : "unknown");
+		return;
+	}
+
 	if (SDL_IsGameController(deviceID)) {
 		const char* name = SDL_GameControllerNameForIndex(deviceID);
 		LOG_L(L_INFO, "[ControllerInput] SDL game controller available: deviceID=%d name=%s", deviceID, name != nullptr ? name : "unknown");
@@ -147,6 +203,11 @@ void CControllerInput::ScanExistingControllers()
 	LOG_L(L_INFO, "[ControllerInput] Scanning existing SDL joysticks: count=%d", joystickCount);
 
 	for (int deviceID = 0; deviceID < joystickCount; ++deviceID) {
+		if (IsFilteredVirtualDevice(deviceID)) {
+			LogAvailableController(deviceID);
+			continue;
+		}
+
 		LogAvailableController(deviceID);
 
 		if (SDL_IsGameController(deviceID)) {
@@ -158,9 +219,70 @@ void CControllerInput::ScanExistingControllers()
 	}
 }
 
+bool CControllerInput::IsDeviceIDTracked(int deviceID) const
+{
+	for (const auto& controllerIt : controllersByInstanceID) {
+		if (controllerIt.second.deviceID == deviceID && controllerIt.second.gameController != nullptr)
+			return true;
+	}
+
+	return false;
+}
+
+bool CControllerInput::IsFilteredVirtualDevice(int deviceID) const
+{
+#if CONTROLLER_INPUT_FILTER_VJOY_CHURN
+	const char* name = SDL_JoystickNameForIndex(deviceID);
+	if (name == nullptr)
+		return false;
+
+	const std::string_view deviceName(name);
+	return ControllerInputNameContains(deviceName, "vjoy") || ControllerInputNameContains(deviceName, "virtual");
+#else
+	return false;
+#endif
+}
+
+bool CControllerInput::ShouldSuppressDeviceEvent(std::uint32_t eventType, int eventID)
+{
+#if CONTROLLER_INPUT_DEBOUNCE_DEVICE_EVENTS
+	const spring_time now = spring_gettime();
+	const bool duplicateEvent =
+		lastDeviceEventType == eventType &&
+		lastDeviceEventID == eventID &&
+		lastDeviceEventTime.isTime() &&
+		((now - lastDeviceEventTime) < spring_msecs(CONTROLLER_INPUT_DEVICE_EVENT_DEBOUNCE_MS));
+
+	lastDeviceEventType = eventType;
+	lastDeviceEventID = eventID;
+	lastDeviceEventTime = now;
+
+	if (duplicateEvent) {
+		LOG_L(L_INFO,
+			"[ControllerStutterFix01] Suppressed duplicate controller device event: type=%u id=%d debounce=%dms",
+			eventType, eventID, static_cast<int>(CONTROLLER_INPUT_DEVICE_EVENT_DEBOUNCE_MS));
+		return true;
+	}
+#endif
+
+	return false;
+}
+
 void CControllerInput::HandleDeviceAdded(int deviceID)
 {
 	LOG_L(L_INFO, "[ControllerInput] Controller device added: deviceID=%d", deviceID);
+
+	if (IsFilteredVirtualDevice(deviceID)) {
+		const char* name = SDL_JoystickNameForIndex(deviceID);
+		LOG_L(L_INFO, "[ControllerStutterFix01] Ignored vJoy/virtual controller churn: deviceID=%d name=%s", deviceID, name != nullptr ? name : "unknown");
+		return;
+	}
+
+	if (IsDeviceIDTracked(deviceID)) {
+		LOG_L(L_INFO, "[ControllerStutterFix01] Skipping duplicate controller add for already tracked deviceID=%d", deviceID);
+		return;
+	}
+
 	LogAvailableController(deviceID);
 
 	if (!SDL_IsGameController(deviceID)) {

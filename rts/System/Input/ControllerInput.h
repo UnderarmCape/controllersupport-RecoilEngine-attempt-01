@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "System/Input/InputHandler.h"
+#include "System/Misc/SpringTime.h"
 
 class CControllerInput
 {
@@ -44,6 +45,9 @@ private:
 
 	void LogAvailableController(int deviceID) const;
 	void ScanExistingControllers();
+	bool IsDeviceIDTracked(int deviceID) const;
+	bool IsFilteredVirtualDevice(int deviceID) const;
+	bool ShouldSuppressDeviceEvent(std::uint32_t eventType, int eventID);
 	void HandleDeviceAdded(int deviceID);
 	void HandleDeviceRemoved(int instanceID);
 	void HandleDeviceRemapped(int instanceID);
@@ -54,6 +58,9 @@ private:
 private:
 	InputHandler::HandlerTokenT inputCon;
 	std::unordered_map<int, TrackedControllerState> controllersByInstanceID;
+	std::uint32_t lastDeviceEventType = 0;
+	int lastDeviceEventID = -1;
+	spring_time lastDeviceEventTime = spring_notime;
 };
 
 extern CControllerInput* controllerInput;
