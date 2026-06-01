@@ -68,6 +68,7 @@
 #include "System/Input/KeyInput.h"
 #include "System/LoadSave/DemoReader.h"
 #include "System/Log/DefaultFilter.h"
+#include "System/Log/ILog.h"
 #include "System/Platform/SDL1_keysym.h"
 #include "System/Platform/Misc.h"
 #include "System/Sound/ISound.h"
@@ -89,6 +90,14 @@
 #include <SDL_clipboard.h>
 #include <SDL_keycode.h>
 #include <SDL_mouse.h>
+
+#ifndef CONTROLLER_INPUT_DIAG_TIMING
+#define CONTROLLER_INPUT_DIAG_TIMING 1
+#endif
+
+#ifndef CONTROLLER_INPUT_DISABLE_LUA_BRIDGE
+#define CONTROLLER_INPUT_DISABLE_LUA_BRIDGE 0
+#endif
 
 
 /******************************************************************************
@@ -3846,6 +3855,42 @@ int LuaUnsyncedRead::GetMouseButtonsPressed(lua_State* L)
  * @section controllerinput
 ******************************************************************************/
 
+#if CONTROLLER_INPUT_DIAG_TIMING
+static bool ControllerLuaDiagShouldLog(const spring_time startTime, spring_time& lastLogTime, float& elapsedMS)
+{
+	elapsedMS = (spring_gettime() - startTime).toMilliSecsf();
+	if (elapsedMS < 2.0f)
+		return false;
+
+	const spring_time now = spring_gettime();
+	const spring_time throttle = spring_msecs((elapsedMS >= 8.0f) ? 250.0f : 1000.0f);
+
+	if (lastLogTime.isTime() && now < (lastLogTime + throttle))
+		return false;
+
+	lastLogTime = now;
+	return true;
+}
+
+static void ControllerLuaDiagLogSlowCall(const char* section, const spring_time startTime, int returnedCount)
+{
+	static spring_time lastLogTime = spring_notime;
+	float elapsedMS = 0.0f;
+	if (!ControllerLuaDiagShouldLog(startTime, lastLogTime, elapsedMS))
+		return;
+
+	if (elapsedMS >= 8.0f) {
+		LOG_L(L_WARNING,
+			"[ControllerInputDiag] LuaUnsyncedRead::%s slow %.3fms returned=%d",
+			section, elapsedMS, returnedCount);
+	} else {
+		LOG_L(L_INFO,
+			"[ControllerInputDiag] LuaUnsyncedRead::%s slow %.3fms returned=%d",
+			section, elapsedMS, returnedCount);
+	}
+}
+#endif
+
 static void PushControllerInfo(lua_State* L, const CControllerInput::ControllerState& controller)
 {
 	lua_createtable(L, 0, 3);
@@ -3896,8 +3941,23 @@ static void PushControllerState(lua_State* L, const CControllerInput::Controller
  */
 int LuaUnsyncedRead::GetAvailableControllers(lua_State* L)
 {
+#if CONTROLLER_INPUT_DIAG_TIMING
+	const spring_time controllerInputDiagStart = spring_gettime();
+#endif
+
+#if CONTROLLER_INPUT_DISABLE_LUA_BRIDGE
+	lua_createtable(L, 0, 0);
+#if CONTROLLER_INPUT_DIAG_TIMING
+	ControllerLuaDiagLogSlowCall("GetAvailableControllers(disabled)", controllerInputDiagStart, 0);
+#endif
+	return 1;
+#endif
+
 	if (controllerInput == nullptr) {
 		lua_createtable(L, 0, 0);
+#if CONTROLLER_INPUT_DIAG_TIMING
+		ControllerLuaDiagLogSlowCall("GetAvailableControllers(no-input)", controllerInputDiagStart, 0);
+#endif
 		return 1;
 	}
 
@@ -3908,6 +3968,10 @@ int LuaUnsyncedRead::GetAvailableControllers(lua_State* L)
 		PushControllerInfo(L, controllers[i]);
 		lua_rawseti(L, -2, static_cast<int>(i + 1));
 	}
+
+#if CONTROLLER_INPUT_DIAG_TIMING
+	ControllerLuaDiagLogSlowCall("GetAvailableControllers", controllerInputDiagStart, static_cast<int>(controllers.size()));
+#endif
 
 	return 1;
 }
@@ -3920,16 +3984,40 @@ int LuaUnsyncedRead::GetAvailableControllers(lua_State* L)
  */
 int LuaUnsyncedRead::GetControllerState(lua_State* L)
 {
-	if (controllerInput == nullptr)
+#if CONTROLLER_INPUT_DIAG_TIMING
+	const spring_time controllerInputDiagStart = spring_gettime();
+#endif
+
+#if CONTROLLER_INPUT_DISABLE_LUA_BRIDGE
+#if CONTROLLER_INPUT_DIAG_TIMING
+	ControllerLuaDiagLogSlowCall("GetControllerState(disabled)", controllerInputDiagStart, 0);
+#endif
+	return 0;
+#endif
+
+	if (controllerInput == nullptr) {
+#if CONTROLLER_INPUT_DIAG_TIMING
+		ControllerLuaDiagLogSlowCall("GetControllerState(no-input)", controllerInputDiagStart, 0);
+#endif
 		return 0;
+	}
 
 	const int instanceID = luaL_checkint(L, 1);
 
 	const auto controller = controllerInput->GetControllerState(instanceID);
-	if (!controller.has_value())
+	if (!controller.has_value()) {
+#if CONTROLLER_INPUT_DIAG_TIMING
+		ControllerLuaDiagLogSlowCall("GetControllerState(miss)", controllerInputDiagStart, 0);
+#endif
 		return 0;
+	}
 
 	PushControllerState(L, *controller);
+
+#if CONTROLLER_INPUT_DIAG_TIMING
+	ControllerLuaDiagLogSlowCall("GetControllerState", controllerInputDiagStart, 1);
+#endif
+
 	return 1;
 }
 
