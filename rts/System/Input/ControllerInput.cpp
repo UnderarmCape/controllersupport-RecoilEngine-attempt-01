@@ -4,9 +4,14 @@
 
 #include "System/Input/InputHandler.h"
 #include "System/Log/ILog.h"
+#include "System/Misc/SpringTime.h"
 
 #ifndef CONTROLLER_INPUT_LOG_EVENTS
 #define CONTROLLER_INPUT_LOG_EVENTS 0
+#endif
+
+#ifndef CONTROLLER_INPUT_DIAG_TIMING
+#define CONTROLLER_INPUT_DIAG_TIMING 1
 #endif
 
 #ifndef HEADLESS
@@ -18,6 +23,98 @@
 #endif
 
 CControllerInput* controllerInput = nullptr;
+
+#if CONTROLLER_INPUT_DIAG_TIMING
+namespace {
+constexpr float CONTROLLER_INPUT_DIAG_INFO_MS = 2.0f;
+constexpr float CONTROLLER_INPUT_DIAG_WARN_MS = 8.0f;
+
+bool ControllerInputDiagShouldLog(const spring_time startTime, spring_time& lastLogTime, float& elapsedMS)
+{
+	elapsedMS = (spring_gettime() - startTime).toMilliSecsf();
+	if (elapsedMS < CONTROLLER_INPUT_DIAG_INFO_MS)
+		return false;
+
+	const spring_time now = spring_gettime();
+	const spring_time throttle = spring_msecs((elapsedMS >= CONTROLLER_INPUT_DIAG_WARN_MS) ? 250.0f : 1000.0f);
+
+	if (lastLogTime.isTime() && now < (lastLogTime + throttle))
+		return false;
+
+	lastLogTime = now;
+	return true;
+}
+
+void ControllerInputDiagLogSlowCopy(const char* section, const spring_time startTime, size_t returnedCount, size_t trackedCount)
+{
+	static spring_time lastLogTime = spring_notime;
+	float elapsedMS = 0.0f;
+	if (!ControllerInputDiagShouldLog(startTime, lastLogTime, elapsedMS))
+		return;
+
+	if (elapsedMS >= CONTROLLER_INPUT_DIAG_WARN_MS) {
+		LOG_L(L_WARNING,
+			"[ControllerInputDiag] %s slow %.3fms returned=%u tracked=%u",
+			section, elapsedMS, static_cast<unsigned int>(returnedCount), static_cast<unsigned int>(trackedCount));
+	} else {
+		LOG_L(L_INFO,
+			"[ControllerInputDiag] %s slow %.3fms returned=%u tracked=%u",
+			section, elapsedMS, static_cast<unsigned int>(returnedCount), static_cast<unsigned int>(trackedCount));
+	}
+}
+
+#ifndef HEADLESS
+const char* ControllerInputDiagEventName(std::uint32_t eventType)
+{
+	switch (eventType) {
+		case SDL_CONTROLLERDEVICEADDED: return "SDL_CONTROLLERDEVICEADDED";
+		case SDL_CONTROLLERDEVICEREMOVED: return "SDL_CONTROLLERDEVICEREMOVED";
+		case SDL_CONTROLLERDEVICEREMAPPED: return "SDL_CONTROLLERDEVICEREMAPPED";
+		case SDL_CONTROLLERBUTTONDOWN: return "SDL_CONTROLLERBUTTONDOWN";
+		case SDL_CONTROLLERBUTTONUP: return "SDL_CONTROLLERBUTTONUP";
+		case SDL_CONTROLLERAXISMOTION: return "SDL_CONTROLLERAXISMOTION";
+		default: return "non-controller";
+	}
+}
+
+void ControllerInputDiagLogSlowEvent(const char* section, const spring_time startTime, std::uint32_t eventType, int trackedCount)
+{
+	static spring_time lastLogTime = spring_notime;
+	float elapsedMS = 0.0f;
+	if (!ControllerInputDiagShouldLog(startTime, lastLogTime, elapsedMS))
+		return;
+
+	if (elapsedMS >= CONTROLLER_INPUT_DIAG_WARN_MS) {
+		LOG_L(L_WARNING,
+			"[ControllerInputDiag] %s slow %.3fms event=%s tracked=%d",
+			section, elapsedMS, ControllerInputDiagEventName(eventType), trackedCount);
+	} else {
+		LOG_L(L_INFO,
+			"[ControllerInputDiag] %s slow %.3fms event=%s tracked=%d",
+			section, elapsedMS, ControllerInputDiagEventName(eventType), trackedCount);
+	}
+}
+
+void ControllerInputDiagLogSlowDeviceOp(const char* section, const spring_time startTime, int id, int trackedCount)
+{
+	static spring_time lastLogTime = spring_notime;
+	float elapsedMS = 0.0f;
+	if (!ControllerInputDiagShouldLog(startTime, lastLogTime, elapsedMS))
+		return;
+
+	if (elapsedMS >= CONTROLLER_INPUT_DIAG_WARN_MS) {
+		LOG_L(L_WARNING,
+			"[ControllerInputDiag] %s slow %.3fms id=%d tracked=%d",
+			section, elapsedMS, id, trackedCount);
+	} else {
+		LOG_L(L_INFO,
+			"[ControllerInputDiag] %s slow %.3fms id=%d tracked=%d",
+			section, elapsedMS, id, trackedCount);
+	}
+}
+#endif
+}
+#endif
 
 CControllerInput* CControllerInput::GetInstance()
 {
@@ -36,6 +133,10 @@ void CControllerInput::FreeInstance()
 
 std::vector<CControllerInput::ControllerState> CControllerInput::GetAvailableControllers() const
 {
+#if CONTROLLER_INPUT_DIAG_TIMING
+	const spring_time controllerInputDiagStart = spring_gettime();
+#endif
+
 	std::vector<ControllerState> controllers;
 	controllers.reserve(controllersByInstanceID.size());
 
@@ -43,17 +144,34 @@ std::vector<CControllerInput::ControllerState> CControllerInput::GetAvailableCon
 		controllers.push_back(controllerIt.second);
 	}
 
+#if CONTROLLER_INPUT_DIAG_TIMING
+	ControllerInputDiagLogSlowCopy("CControllerInput::GetAvailableControllers", controllerInputDiagStart, controllers.size(), controllersByInstanceID.size());
+#endif
+
 	return controllers;
 }
 
 std::optional<CControllerInput::ControllerState> CControllerInput::GetControllerState(int instanceID) const
 {
+#if CONTROLLER_INPUT_DIAG_TIMING
+	const spring_time controllerInputDiagStart = spring_gettime();
+#endif
+
 	const auto controllerIt = controllersByInstanceID.find(instanceID);
 	if (controllerIt == controllersByInstanceID.end()) {
+#if CONTROLLER_INPUT_DIAG_TIMING
+		ControllerInputDiagLogSlowCopy("CControllerInput::GetControllerState(miss)", controllerInputDiagStart, 0, controllersByInstanceID.size());
+#endif
 		return std::nullopt;
 	}
 
-	return controllerIt->second;
+	const auto controllerState = controllerIt->second;
+
+#if CONTROLLER_INPUT_DIAG_TIMING
+	ControllerInputDiagLogSlowCopy("CControllerInput::GetControllerState(hit)", controllerInputDiagStart, 1, controllersByInstanceID.size());
+#endif
+
+	return controllerState;
 }
 
 #ifndef HEADLESS
@@ -97,6 +215,10 @@ CControllerInput::~CControllerInput()
 
 bool CControllerInput::HandleSDLControllerEvent(const SDL_Event& event)
 {
+#if CONTROLLER_INPUT_DIAG_TIMING
+	const spring_time controllerInputDiagStart = spring_gettime();
+#endif
+
 	switch (event.type) {
 		case SDL_CONTROLLERDEVICEADDED: {
 			HandleDeviceAdded(event.cdevice.which);
@@ -126,6 +248,10 @@ bool CControllerInput::HandleSDLControllerEvent(const SDL_Event& event)
 			break;
 	}
 
+#if CONTROLLER_INPUT_DIAG_TIMING
+	ControllerInputDiagLogSlowEvent("CControllerInput::HandleSDLControllerEvent", controllerInputDiagStart, event.type, static_cast<int>(controllersByInstanceID.size()));
+#endif
+
 	return false;
 }
 
@@ -143,6 +269,10 @@ void CControllerInput::LogAvailableController(int deviceID) const
 
 void CControllerInput::ScanExistingControllers()
 {
+#if CONTROLLER_INPUT_DIAG_TIMING
+	const spring_time controllerInputDiagStart = spring_gettime();
+#endif
+
 	const int joystickCount = SDL_NumJoysticks();
 	LOG_L(L_INFO, "[ControllerInput] Scanning existing SDL joysticks: count=%d", joystickCount);
 
@@ -156,21 +286,35 @@ void CControllerInput::ScanExistingControllers()
 
 		LOG_L(L_INFO, "[ControllerInput] Skipping existing non-game-controller device: deviceID=%d", deviceID);
 	}
+
+#if CONTROLLER_INPUT_DIAG_TIMING
+	ControllerInputDiagLogSlowDeviceOp("CControllerInput::ScanExistingControllers", controllerInputDiagStart, joystickCount, static_cast<int>(controllersByInstanceID.size()));
+#endif
 }
 
 void CControllerInput::HandleDeviceAdded(int deviceID)
 {
+#if CONTROLLER_INPUT_DIAG_TIMING
+	const spring_time controllerInputDiagStart = spring_gettime();
+#endif
+
 	LOG_L(L_INFO, "[ControllerInput] Controller device added: deviceID=%d", deviceID);
 	LogAvailableController(deviceID);
 
 	if (!SDL_IsGameController(deviceID)) {
 		LOG_L(L_INFO, "[ControllerInput] Ignoring non-game-controller device: deviceID=%d", deviceID);
+#if CONTROLLER_INPUT_DIAG_TIMING
+		ControllerInputDiagLogSlowDeviceOp("CControllerInput::HandleDeviceAdded(non-controller)", controllerInputDiagStart, deviceID, static_cast<int>(controllersByInstanceID.size()));
+#endif
 		return;
 	}
 
 	SDL_GameController* gameController = SDL_GameControllerOpen(deviceID);
 	if (gameController == nullptr) {
 		LOG_L(L_WARNING, "[ControllerInput] Failed to open SDL game controller: deviceID=%d error=%s", deviceID, SDL_GetError());
+#if CONTROLLER_INPUT_DIAG_TIMING
+		ControllerInputDiagLogSlowDeviceOp("CControllerInput::HandleDeviceAdded(open-failed)", controllerInputDiagStart, deviceID, static_cast<int>(controllersByInstanceID.size()));
+#endif
 		return;
 	}
 
@@ -180,6 +324,9 @@ void CControllerInput::HandleDeviceAdded(int deviceID)
 	if (instanceID < 0) {
 		LOG_L(L_WARNING, "[ControllerInput] Failed to get joystick instance ID: deviceID=%d", deviceID);
 		SDL_GameControllerClose(gameController);
+#if CONTROLLER_INPUT_DIAG_TIMING
+		ControllerInputDiagLogSlowDeviceOp("CControllerInput::HandleDeviceAdded(instance-failed)", controllerInputDiagStart, deviceID, static_cast<int>(controllersByInstanceID.size()));
+#endif
 		return;
 	}
 
@@ -199,14 +346,25 @@ void CControllerInput::HandleDeviceAdded(int deviceID)
 	controllersByInstanceID[instanceID] = state;
 
 	LOG_L(L_INFO, "[ControllerInput] Controller connected: deviceID=%d instanceID=%d name=%s", deviceID, instanceID, state.name.c_str());
+
+#if CONTROLLER_INPUT_DIAG_TIMING
+	ControllerInputDiagLogSlowDeviceOp("CControllerInput::HandleDeviceAdded", controllerInputDiagStart, deviceID, static_cast<int>(controllersByInstanceID.size()));
+#endif
 }
 
 void CControllerInput::HandleDeviceRemoved(int instanceID)
 {
+#if CONTROLLER_INPUT_DIAG_TIMING
+	const spring_time controllerInputDiagStart = spring_gettime();
+#endif
+
 	LOG_L(L_INFO, "[ControllerInput] Controller device removed: instanceID=%d", instanceID);
 
 	auto it = controllersByInstanceID.find(instanceID);
 	if (it == controllersByInstanceID.end()) {
+#if CONTROLLER_INPUT_DIAG_TIMING
+		ControllerInputDiagLogSlowDeviceOp("CControllerInput::HandleDeviceRemoved(miss)", controllerInputDiagStart, instanceID, static_cast<int>(controllersByInstanceID.size()));
+#endif
 		return;
 	}
 
@@ -218,11 +376,23 @@ void CControllerInput::HandleDeviceRemoved(int instanceID)
 	}
 
 	controllersByInstanceID.erase(it);
+
+#if CONTROLLER_INPUT_DIAG_TIMING
+	ControllerInputDiagLogSlowDeviceOp("CControllerInput::HandleDeviceRemoved", controllerInputDiagStart, instanceID, static_cast<int>(controllersByInstanceID.size()));
+#endif
 }
 
 void CControllerInput::HandleDeviceRemapped(int instanceID)
 {
+#if CONTROLLER_INPUT_DIAG_TIMING
+	const spring_time controllerInputDiagStart = spring_gettime();
+#endif
+
 	LOG_L(L_INFO, "[ControllerInput] Controller remapped: instanceID=%d", instanceID);
+
+#if CONTROLLER_INPUT_DIAG_TIMING
+	ControllerInputDiagLogSlowDeviceOp("CControllerInput::HandleDeviceRemapped", controllerInputDiagStart, instanceID, static_cast<int>(controllersByInstanceID.size()));
+#endif
 }
 
 void CControllerInput::HandleButtonDown(int instanceID, int buttonID, std::uint8_t value)
